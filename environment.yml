@@ -1,0 +1,31 @@
+conda install -y 
+
+name: AmpliconPCR
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - fastqc 
+  - multiqc 
+  - trim-galore 
+  - vsearch 
+  - blast 
+  - raxml 
+  - cap3 
+  - krona 
+  - libxml2 
+  - gcc_linux-64 
+  - gxx_linux-64 
+  - gfortran_linux-64 
+  - perl-padwalker 
+  - perl-xml-libxml 
+  - perl-libxml-perl 
+  - perl-bioperl 
+  - perl-getopt-long 
+  - perl-math-round 
+  - perl-statistics-basic 
+  - perl-list-moreutils 
+  - perl-module-build 
+  - perl-bioperl-run 
+  - perl-text-csv
+
