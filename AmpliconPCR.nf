@@ -17,7 +17,6 @@
 
 params.help = null
 params.input_folder = "FASTQ/"
-params.output_folder = "OUT/"
 params.ext = "fastq.gz"
 params.cpus = 2
 params.mem = 10
@@ -26,7 +25,6 @@ params.suffix1      = "_1"
 params.suffix2      = "_2"
 params.dbnt = "nt"
 params.identity = 98
-
 
 
 log.info ""
@@ -49,7 +47,6 @@ if (params.help) {
     log.info ""
     log.info "Mandatory arguments:"
     log.info "--input_folder         FOLDER               Folder containing fastq files"
-    log.info "--output_folder        FOLDER                 Output directory for html and zip files (default=fastqc_ouptut)"
     log.info ""
     log.info "Optional arguments:"
     log.info "--prefix        STRING                 prefix (default=pool)"
@@ -86,8 +83,7 @@ infiles = Channel
 log.info'##########################################\n##\tFastQC control of the raw reads\t##\n##########################################'
 
 process fastqc_fastq {
-  //tag "$pair_id"
-  publishDir params.output_folder+'/fastqc/' , mode: 'copy', overwrite: false
+  publishDir 'out/fastqc/' , mode: 'copy', overwrite: false
 
   input:
   set pair_id, file(reads) from read_files_fastqc
@@ -105,9 +101,8 @@ process fastqc_fastq {
 
 
 process multiqc {
-  //tag "$report[0].baseName"
 
-  publishDir params.output_folder+'/multiqc/', mode: 'copy', overwrite: false
+  publishDir 'out/multiqc/', mode: 'copy', overwrite: false
   cpus = 1
 
   input:
@@ -123,22 +118,22 @@ process multiqc {
 }
 
 log.info'##########################################\n##\tRemove adapter sequence\t\t##\n##########################################'
-// Trim Galore & FastQC
 
 
 process trim_galore {
-    //tag "$name"
-    publishDir params.output_folder+'/trimgalore/', mode: 'copy', overwrite: false,
+    publishDir 'out/trimgalore/', mode: 'copy', overwrite: false,
         saveAs: {filename ->
             if (filename.indexOf("_fastqc") > 0) "FastQC/$filename"
             else if (filename.indexOf("trimming_report.txt") > 0) "logs/$filename"
+            else if (filename.indexOf("*_val_*.fq.gz") > 0) "out/$filename"
             else null}
 
     input:
     set val(name), file(reads) from read_files_trimG
 
     output:
-    file("*_val_*.fq.gz") into fastqc_postpairs    
+    file("*_val_1.fq.gz") into fastq_postpairs1    
+    file("*_val_2.fq.gz") into fastq_postpairs2    
     file("*_unpaired_*.fq.gz") into unpaired
     file "*trimming_report.txt" into trimgalore_results
     file "*_fastqc.{zip,html}" into trimgalore_fastqc_reports
@@ -151,11 +146,12 @@ process trim_galore {
         """
     }
 
+// pool30_S30_L001_R1_001_val_1.fq.gz
+// pool30_S30_L001_R1_001_val_2.fq.gz
 
 process multiqc_trim {
-  //tag "$report[0].baseName"
 
-  publishDir params.output_folder+'/trimgalore/multiqc/', mode: 'copy' , overwrite: false
+  publishDir 'out/trimgalore/multiqc/', mode: 'copy' , overwrite: false
   cpus = 1
 
   input:
@@ -168,4 +164,41 @@ process multiqc_trim {
   """
   multiqc -f .
   """
+}
+
+
+log.info'##########################################\n##\tClustering step : VSEARCH\t##\n##########################################'
+
+/*usearch -threads 1 -fastq_mergepairs ${sample}_forward_renamed.fastq \
+        -reverse ${sample}_reverse_renamed.fastq \
+        -fastqout ${sample}_merged.fastq \
+        -fastq_maxdiffs ${params.fastqMaxdiffs}
+*/
+
+process Merging {
+
+    tag { "${params.prefix}.${sample}" }
+    label 'vsearch'
+    memory { 4.GB * task.attempt }
+    publishDir 'out/vsearch/log/' , mode: 'copy', overwrite: false
+
+    input:
+        set R1 , file(reads) from fastq_postpairs1
+        set R2 , files(reads) from fastq_postpairs2
+
+    output:
+        set out , file("*_merged.fasta") into merged_read_pair
+
+    """
+
+    vsearch --quiet --fastq_mergepairs $R1 \
+    --reverse $R2 \
+    --threads ${params.cpus} \
+    --fastq_allowmergestagger --label_suffix ${params.prefix} \
+    --fastaout_notmerged_fwd R1_UnMFwd.fasta \
+    --fastaout_notmerged_rev R2_UnMRev.fasta \
+    --fastaout test_merged.fasta
+
+    
+    """
 }

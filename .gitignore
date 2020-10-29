@@ -1,8 +1,6 @@
 .nextflow*
 FASTQ
-fastqc/
-multiqc/
 nf-pipeline_info/
 nf_work
 slurm*
-trimgalore/
+out/
