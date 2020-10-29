@@ -1,10 +1,8 @@
-conda install -y 
-
-name: AmpliconPCR
-channels:
+name : PVAmpliconFinder
+channels :
   - bioconda
   - conda-forge
-dependencies:
+dependencies :
   - fastqc 
   - multiqc 
   - trim-galore 

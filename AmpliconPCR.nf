@@ -17,21 +17,14 @@
 
 params.help = null
 params.input_folder = "FASTQ/"
-params.output_folder = "."
+params.output_folder = "OUT/"
 params.ext = "fastq.gz"
-params.multiqc_config = 'NO_FILE'
-params.cpu = 2
+params.cpus = 2
 params.mem = 10
-params.mem_QC       = 2
 params.prefix      = "pool"
 params.suffix1      = "_1"
 params.suffix2      = "_2"
-
-params.fastq_dir = null
-params.fastq = null
-params.working_dir = null
 params.dbnt = "nt"
-params.info = null
 params.identity = 98
 
 
@@ -57,18 +50,14 @@ if (params.help) {
     log.info "Mandatory arguments:"
     log.info "--input_folder         FOLDER               Folder containing fastq files"
     log.info "--output_folder        FOLDER                 Output directory for html and zip files (default=fastqc_ouptut)"
-    log.info "--prefix        STRING                 prefix (default=pool)"
     log.info ""
     log.info "Optional arguments:"
+    log.info "--prefix        STRING                 prefix (default=pool)"
     log.info '--ext                  STRING               Extension of files (default : fastq.gz)'
-    log.info '--multiqc_config       PATH                 config yaml file for multiqc (default : none)'
-    log.info '--cpu                  INTEGER              Number of cpu used by fastqc (default: 2).'
+    log.info '--cpus                  INTEGER              Number of cpu used by fastqc (default: 2).'
     log.info '--mem                  INTEGER              Size of memory used for mapping (in GB) (default: 10).'
-    log.info '--mem_QC         INTEGER                Size of memory used for QC and cutadapt (in GB) (default: 32).'
     log.info '--suffix1        STRING                 Suffix of fastq files 1 (default : _1)'
     log.info '--suffix2        STRING                 Suffix of fastq files 2 (default : _2)'
-    log.info "--fastq_dir         PATH"
-    log.info "--fastq             STRING"
     log.info "--working_dir       PATH "
     log.info "--dbnt              STRING  (default:nt) "
     log.info "--info              PATH"
@@ -87,21 +76,18 @@ log.info "help:                               ${params.help}"
 assert (params.input_folder != null) : "please provide the --input_folder option"
 
 infiles = Channel
-  .fromFilePairs( params.fastq )
-  .ifEmpty { error "Cannot find any fastq files matching: ${params.fastq}" }
+  .fromFilePairs( '/home/lohmanne/AmpliconPCR-nf/FASTQ/*_R{1,2}*.fastq' )
+  .ifEmpty { error "Cannot find any fastq files matching: ${params.input_folder}" }
   .into  { read_files_fastqc; read_files_trimG }
 
 //file data from Channel.fromPath(${params.fastq_dir}+'*').collect()
-
-//multiqc config file
-ch_config_for_multiqc = file(params.multiqc_config)
 
 
 log.info'##########################################\n##\tFastQC control of the raw reads\t##\n##########################################'
 
 process fastqc_fastq {
   //tag "$pair_id"
-  publishDir "results/fastq/fastqc/", mode: 'copy', overwrite: false
+  publishDir params.output_folder+'/fastqc/' , mode: 'copy', overwrite: false
 
   input:
   set pair_id, file(reads) from read_files_fastqc
@@ -121,7 +107,7 @@ process fastqc_fastq {
 process multiqc {
   //tag "$report[0].baseName"
 
-  publishDir "results/fastq/multiqc/", mode: 'copy', overwrite: false
+  publishDir params.output_folder+'/multiqc/', mode: 'copy', overwrite: false
   cpus = 1
 
   input:
@@ -142,7 +128,7 @@ log.info'##########################################\n##\tRemove adapter sequence
 
 process trim_galore {
     //tag "$name"
-    publishDir "results/fastq/trim_galore", mode: 'copy', overwrite: false,
+    publishDir params.output_folder+'/trimgalore/', mode: 'copy', overwrite: false,
         saveAs: {filename ->
             if (filename.indexOf("_fastqc") > 0) "FastQC/$filename"
             else if (filename.indexOf("trimming_report.txt") > 0) "logs/$filename"
@@ -169,7 +155,7 @@ process trim_galore {
 process multiqc_trim {
   //tag "$report[0].baseName"
 
-  publishDir "results/fastq/trim_galore/multiqc/", mode: 'copy' , overwrite: false
+  publishDir params.output_folder+'/trimgalore/multiqc/', mode: 'copy' , overwrite: false
   cpus = 1
 
   input:
