@@ -1,8 +1,8 @@
-name : PVAmpliconFinder
-channels :
+name: PVAmpliconFinder
+channels:
   - bioconda
   - conda-forge
-dependencies :
+dependencies:
   - fastqc 
   - multiqc 
   - trim-galore 
@@ -26,4 +26,3 @@ dependencies :
   - perl-module-build 
   - perl-bioperl-run 
   - perl-text-csv
-

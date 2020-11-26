@@ -25,7 +25,7 @@ params.suffix1      = "_1"
 params.suffix2      = "_2"
 params.dbnt = "nt"
 params.identity = 98
-
+params.rawReads="/home/lohmanne/AmpliconPCR-nf/FASTQ"
 
 log.info ""
 log.info "--------------------------------------------------------"
@@ -72,10 +72,14 @@ log.info "help:                               ${params.help}"
 
 assert (params.input_folder != null) : "please provide the --input_folder option"
 
-infiles = Channel
-  .fromFilePairs( '/home/lohmanne/AmpliconPCR-nf/FASTQ/*_R{1,2}*.fastq' )
+raw_reads = params.rawReads
+
+read_pair = Channel
+  .fromFilePairs( "${raw_reads}/*_R[1,2]*.fastq", type: 'file')
   .ifEmpty { error "Cannot find any fastq files matching: ${params.input_folder}" }
   .into  { read_files_fastqc; read_files_trimG }
+
+
 
 //file data from Channel.fromPath(${params.fastq_dir}+'*').collect()
 
@@ -90,6 +94,7 @@ process fastqc_fastq {
 
   output:
     file "*.{zip,html}" into fastqc_report
+    stdout into name
 
   script:
   """
@@ -125,26 +130,32 @@ process trim_galore {
         saveAs: {filename ->
             if (filename.indexOf("_fastqc") > 0) "FastQC/$filename"
             else if (filename.indexOf("trimming_report.txt") > 0) "logs/$filename"
-            else if (filename.indexOf("*_val_*.fq.gz") > 0) "out/$filename"
+            else if (filename.indexOf("fq.gz") > 0) "out/$filename"
             else null}
 
     input:
     set val(name), file(reads) from read_files_trimG
 
     output:
-    file("*_val_1.fq.gz") into fastq_postpairs1    
-    file("*_val_2.fq.gz") into fastq_postpairs2    
+    set val(name), file("*_val_*.fq.gz") into fastq_files_trim    
     file("*_unpaired_*.fq.gz") into unpaired
-    file "*trimming_report.txt" into trimgalore_results
-    file "*_fastqc.{zip,html}" into trimgalore_fastqc_reports
+    file("*trimming_report.txt") into trimgalore_results
+    file("*_fastqc.{zip,html}") into trimgalore_fastqc_reports
 
 
     script:
         """
-        trim_galore --paired --fastqc --length 30 --retain_unpaired --gzip $reads 
+        echo ${name};
+        echo ${reads};
+
+        trim_galore --paired --fastqc --length 30 --retain_unpaired --gzip ${reads[0]} ${reads[1]} 
   
         """
     }
+
+// fastq_files_trim.view { "value: $it" }
+
+
 
 // pool30_S30_L001_R1_001_val_1.fq.gz
 // pool30_S30_L001_R1_001_val_2.fq.gz
@@ -167,13 +178,16 @@ process multiqc_trim {
 }
 
 
+
+
 log.info'##########################################\n##\tClustering step : VSEARCH\t##\n##########################################'
 
 /*usearch -threads 1 -fastq_mergepairs ${sample}_forward_renamed.fastq \
         -reverse ${sample}_reverse_renamed.fastq \
         -fastqout ${sample}_merged.fastq \
         -fastq_maxdiffs ${params.fastqMaxdiffs}
-*/
+// */
+
 
 process Merging {
 
@@ -182,23 +196,167 @@ process Merging {
     memory { 4.GB * task.attempt }
     publishDir 'out/vsearch/log/' , mode: 'copy', overwrite: false
 
-    input:
-        set R1 , file(reads) from fastq_postpairs1
-        set R2 , files(reads) from fastq_postpairs2
+    input:  
+    set val(name), file(reads) from fastq_files_trim
+
 
     output:
-        set out , file("*_merged.fasta") into merged_read_pair
+    set val(name), file("*_merged.fasta") into merged_read_pair
+    file("*_UnMFwd.fasta") into unmergedForward
+    file("*_UnMRev.fasta") into unmergedReverse
 
     """
 
-    vsearch --quiet --fastq_mergepairs $R1 \
-    --reverse $R2 \
+    vsearch --quiet --fastq_mergepairs ${reads[0]}  \
+    --reverse  ${reads[1]} \
     --threads ${params.cpus} \
     --fastq_allowmergestagger --label_suffix ${params.prefix} \
-    --fastaout_notmerged_fwd R1_UnMFwd.fasta \
-    --fastaout_notmerged_rev R2_UnMRev.fasta \
-    --fastaout test_merged.fasta
+    --fastaout_notmerged_fwd ${name}_UnMFwd.fasta \
+    --fastaout_notmerged_rev ${name}_UnMRev.fasta \
+    --fastaout ${name}_merged.fasta
 
     
     """
+}
+
+log.info'##########################################\n##\t FUSION DES UNMERGED \t##\n##########################################'
+
+process Fusion {
+
+    tag { "${params.prefix}.${sample}" }
+    label 'fusion'
+    memory { 4.GB * task.attempt }
+    publishDir 'out/vsearch/log/' , mode: 'copy', overwrite: false
+
+    input:  
+    set val(name), file(reads) from merged_read_pair
+    file(readsF) from unmergedForward
+    file(readsR) from unmergedReverse
+  
+    output:
+    set val(name), file("*_paired.fasta") into fusionfasta
+
+
+    """
+cat ${readsF} ${reads}  >  ${name}_paired.fasta ;
+
+cat ${readsR} >> ${name}_paired.fasta 
+    
+    """
+}
+
+log.info'##########################################\n##Dereplication step : VSEARCH\t##\n##########################################'
+
+process  vparseDerepWorkAround {
+    tag { "${params.prefix}.${sample}" }
+    label 'derep'
+    memory { 4.GB * task.attempt }
+    publishDir "out/vsearch/log/", mode: 'copy', overwrite: false,
+      saveAs: {filename ->
+          if (filename.indexOf("lin_der") > 0) "$filename"
+          else if (filename.indexOf("log") > 0) "log_files/$filename"
+          else null}
+
+
+    input:
+	    set val(name), file(read) from fusionfasta
+
+    output:
+      set val(name), file('*lin_der.fas') into derep_fasta
+
+    """
+   vsearch --quiet --derep_fulllength ${read} \
+    --sizeout --threads ${params.cpus} --relabel_sha1 --fasta_width 0 \
+    --strand both \
+    --minuniquesize 1 --output ${name}_lin_der.fas \
+    --log ${name}_lin_der.log
+
+
+    """
+}
+
+log.info'##########################################\n##Chimerics removal step : VSEARCH\t##\n##########################################'
+
+process  ChimericRemov {
+    tag { "${params.prefix}.${sample}" }
+    label 'derep'
+    memory { 4.GB * task.attempt }
+    publishDir "out/vsearch/log/", mode: 'copy', overwrite: false,
+      saveAs: {filename ->
+          if (filename.indexOf("no_chim") > 0) "$filename"
+          else if (filename.indexOf("log") > 0) "log_files/$filename"
+          else null}
+
+    input:
+	   set val(name), file(read) from derep_fasta
+
+    output:
+    set val(name), file("*no_chim.fasta") into no_chimfasta
+
+    """
+vsearch --quiet --uchime_denovo ${read}  \
+    --sizein --threads ${params.cpus} --relabel ${params.prefix} \
+    --sizeout --xsize --nonchimeras ${name}_no_chim.fasta \
+    --log ${name}_chimeria.log 
+
+    """
+}
+
+
+log.info'##########################################\n##Clustering step : VSEARCH\t##\n##########################################'
+
+
+process  Clustering {
+    tag { "${params.prefix}.${sample}" }
+    label 'derep'
+    memory { 4.GB * task.attempt }
+    publishDir "out/vsearch/log/", mode: 'copy', overwrite: false,
+      saveAs: {filename ->
+          if (filename.indexOf("clustered") > 0) "$filename"
+          else if (filename.indexOf("log") > 0) "log_files/$filename"
+          else null}
+
+    input:
+	   set val(name), file(read) from no_chimfasta
+
+    output:
+    set val(name), file("*_clustered.fasta") into clusteredfasta
+
+
+
+"""
+vsearch --quiet --cluster_size ${read} \
+    --id 0.97 --threads  ${params.cpus} \
+    --sizein --clusterout_id --clusterout_sort \
+    --sizeout --xsize --relabel ${params.prefix} \
+    --centroids ${name}_clustered.fasta \
+    --log ${name}_clustered.log
+        """
+}
+
+log.info'##########################################\n##Blast\t##\n##########################################'
+
+
+
+process  Blast {
+    tag { "${params.prefix}.${sample}" }
+    label 'derep'
+    memory { 30.GB * task.attempt }
+    publishDir "out/blast_result/", mode: 'copy', overwrite: false
+
+    input:
+	  set val(name), file(read) from clusteredfasta
+
+    output:
+	   set val(name), file("*blast") into blast
+
+
+"""
+ blastn -task megablast -db nt -query ${read}  -out ${name}.blast \
+     -evalue 1e-05 -max_target_seqs 1 -num_threads ${params.cpus}  \
+     -outfmt "6 qseqid sseqid evalue bitscore length pident frames staxids sskingdoms sscinames scomnames sblastnames stitle qseq qstart qend" ;
+
+     sed -i '1iQueryID\tSubjectID\tevalue\tbitscore\tlength query\tperc id\tframes\ttaxid\tkingdom\tscientifique name\tcommon name\tblast name\ttitle\tseq query\tstartq\tstopq'  ${name}.blast
+
+"""
 }
